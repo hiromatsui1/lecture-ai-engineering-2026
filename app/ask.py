@@ -24,7 +24,7 @@ DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何�
 
 def ask(question: str) -> str:
     client = genai.Client(api_key=get_api_key())
-    response = client.models.generate_content(model=MODEL, contents=question, config=types.GenerateContentConfig(temperature=1.8),)
+    response = client.models.generate_content(model=MODEL, contents=question, config=types.GenerateContentConfig(temperature=1.0),)
 
     usage = response.usage_metadata
     input_tokens = getattr(usage, "prompt_token_count", None)
