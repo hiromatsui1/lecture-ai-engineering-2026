@@ -84,9 +84,21 @@ def load_labels(path: Path) -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------- 判定
+
+def _criterion_dump(value: object) -> dict:
+    """JudgeResult や dict から各基準の {reason, verdict} を取り出す。"""
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return {}
+
+
 def check_lecture_mark(answer: str) -> Verdict:
     """回答の末尾（最後の行）に「第N回」があるか。LLM に聞かず、コードで決める。"""
-    lines = [line.strip() for line in answer.strip().splitlines() if line.strip()]
+    if not answer:
+        return "fail"
+    lines = [line.strip() for line in str(answer).strip().splitlines() if line.strip()]
     tail = lines[-1] if lines else ""
     return "pass" if re.search(r"第\s*\d+\s*回", tail) else "fail"
 
@@ -194,11 +206,15 @@ def judge_cases(agent: Agent, cases: list[dict], wait: float = 0.0) -> dict[str,
     print(f"採点中 {len(cases)} 件 ", end="", flush=True)
     for case in cases:
         result = agent.run_sync(judge_prompt(case))
-        out: JudgeResult = result.output
-        verdicts[case["id"]] = {key: getattr(out, key).model_dump() for key, _ in LLM_CRITERIA}
+        out = result.output
+        criterion_values = {}
+        for key, _ in LLM_CRITERIA:
+            value = getattr(out, key) if not isinstance(out, dict) else out.get(key)
+            criterion_values[key] = _criterion_dump(value)
+        verdicts[case["id"]] = criterion_values
         verdicts[case["id"]]["lecture_mark"] = {
             "reason": "末尾（最後の行）に「第N回」があるかをコードで判定",
-            "verdict": check_lecture_mark(case["answer"]),
+            "verdict": check_lecture_mark(case.get("answer", "")),
         }
         print(".", end="", flush=True)
         if wait:
@@ -209,7 +225,9 @@ def judge_cases(agent: Agent, cases: list[dict], wait: float = 0.0) -> dict[str,
 
 def overall(verdict_of: dict[str, str]) -> Verdict:
     """総合：必須の基準が全部 pass なら pass。どれかが unsure なら unsure。"""
-    values = [verdict_of[k] for k in REQUIRED]
+    values = [verdict_of.get(k) for k in REQUIRED]
+    if any(v is None for v in values):
+        return "fail"
     if "unsure" in values:
         return "unsure"
     return "pass" if all(x == "pass" for x in values) else "fail"
@@ -222,7 +240,8 @@ def summarize(cases: list[dict], verdicts: dict[str, dict], labels: dict[str, di
     for key, name in ALL_CRITERIA:
         agree = compared = 0
         for cid in ids:
-            j = verdicts[cid][key]["verdict"]
+            case_verdict = verdicts.get(cid, {})
+            j = case_verdict.get(key, {}).get("verdict") if isinstance(case_verdict.get(key), dict) else case_verdict.get(key)
             h = labels[cid].get(key)
             if j == "unsure" or h not in ("pass", "fail"):
                 continue
@@ -233,15 +252,16 @@ def summarize(cases: list[dict], verdicts: dict[str, dict], labels: dict[str, di
     review, mismatches = [], []
     overall_agree = overall_compared = 0
     for cid in ids:
-        jv = {k: verdicts[cid][k]["verdict"] for k, _ in ALL_CRITERIA}
+        jv = {k: (verdicts.get(cid, {}).get(k, {}).get("verdict") if isinstance(verdicts.get(cid, {}).get(k), dict) else verdicts.get(cid, {}).get(k)) for k, _ in ALL_CRITERIA}
         hv = {k: labels[cid].get(k) for k, _ in ALL_CRITERIA}
         for k, name in ALL_CRITERIA:
-            if jv[k] == "unsure":
-                review.append({"id": cid, "criterion": k, "name": name, "reason": verdicts[cid][k]["reason"]})
-            elif hv[k] in ("pass", "fail") and jv[k] != hv[k]:
-                kind = "見逃し" if jv[k] == "pass" else "過検出"
+            reason = (verdicts.get(cid, {}).get(k, {}).get("reason") if isinstance(verdicts.get(cid, {}).get(k), dict) else "")
+            if jv.get(k) == "unsure":
+                review.append({"id": cid, "criterion": k, "name": name, "reason": reason})
+            elif hv[k] in ("pass", "fail") and jv.get(k) != hv[k]:
+                kind = "見逃し" if jv.get(k) == "pass" else "過検出"
                 mismatches.append({"id": cid, "criterion": k, "name": name, "kind": kind,
-                                   "judge": jv[k], "human": hv[k], "reason": verdicts[cid][k]["reason"]})
+                                   "judge": jv.get(k), "human": hv[k], "reason": reason})
         jo, ho = overall(jv), overall({k: (hv[k] if hv[k] in ("pass", "fail") else "fail") for k in REQUIRED})
         if jo != "unsure":
             overall_compared += 1

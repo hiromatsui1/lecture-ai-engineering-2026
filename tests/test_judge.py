@@ -22,6 +22,10 @@ from app.judge import (
 INSTRUCTOR_LABELS = judge.ROOT / "lectures" / "04" / "reference" / "labels_instructor.jsonl"
 
 
+def test_criterion_output_schema_orders_reason_before_verdict():
+    assert list(judge.CriterionVerdict.model_json_schema()["properties"]) == ["reason", "verdict"]
+
+
 def test_lecture_mark_is_checked_by_code():
     assert check_lecture_mark("LoRA は…\n\n関係する回：第2回") == "pass"
     assert check_lecture_mark("第2回で扱う LoRA は…\n\n以上です。") == "fail"  # 末尾に無ければ fail
