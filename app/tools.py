@@ -83,7 +83,6 @@ def get_lecture_summary(lecture: int) -> str:
 
 def search_materials(query: str) -> str:
     """第1〜3回の本講義資料を検索し、関連ページの本文・タイトル・ページ番号を返す。
-
     queryに調べたい内容を指定する。
     """
     from google.genai.errors import APIError
